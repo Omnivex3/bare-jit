@@ -1,0 +1,15 @@
+# bare-jit-rs
+
+A tiny educational x86-64 arithmetic JIT written in Rust.
+
+This intentionally targets Linux x86-64 and the System V ABI. It emits handwritten machine-code bytes, places them in RW memory, changes the page to RX, and calls it as an `extern "C" fn(i64) -> i64`.
+
+```sh
+cargo run -- '(x + 3) * 7 - 2' 10
+# 89
+cargo test
+```
+
+Supported syntax: decimal integers, `x`, parentheses, unary `+`/`-`, and binary `+`, `-`, `*`, `/`.
+
+This is a learning project, not production JIT infrastructure. Division by zero and the signed division overflow case intentionally retain native hardware behavior.
