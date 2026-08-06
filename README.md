@@ -1,5 +1,7 @@
 # bare-jit-rs
 
+[![Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust)](https://www.rust-lang.org/)
+
 A tiny educational x86-64 arithmetic JIT written in Rust.
 
 This intentionally targets Linux x86-64 and the System V ABI. It emits handwritten machine-code bytes, places them in RW memory, changes the page to RX, and calls it as an `extern "C" fn(i64) -> i64`.
