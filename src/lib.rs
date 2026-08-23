@@ -1,4 +1,10 @@
-#![cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+#![cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    allow(dead_code)
+)]
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+compile_error!("bare-jit-rs currently supports only Linux x86-64");
 
 mod codegen;
 mod executable_memory;
@@ -31,17 +37,24 @@ impl fmt::Display for CompileError {
 
 impl Error for CompileError {}
 
-pub fn compile(expression: &str) -> Result<Vec<u8>, CompileError> {
-    parser::Parser::new(expression).compile()
+#[derive(Debug)]
+#[must_use]
+pub struct CompiledExpression {
+    code: Vec<u8>,
 }
 
-/// Execute compiler-generated x86-64 code with `x` as its argument.
+pub fn compile(expression: &str) -> Result<CompiledExpression, CompileError> {
+    Ok(CompiledExpression {
+        code: parser::Parser::new(expression).compile()?,
+    })
+}
+
+/// Execute a compiler-generated expression with `x` as its argument.
 ///
-/// # Safety
-/// `code` must be bytes produced by [`compile`]. Arbitrary bytes are executed
-/// as native machine code and may violate Rust's memory-safety guarantees.
-pub unsafe fn execute(code: &[u8], x: i64) -> io::Result<i64> {
-    let memory = executable_memory::ExecutableMemory::new(code)?;
+/// The unsafe machine-code boundary is kept internal because callers cannot
+/// construct a `CompiledExpression` from arbitrary bytes.
+pub fn execute(expression: &CompiledExpression, x: i64) -> io::Result<i64> {
+    let memory = executable_memory::ExecutableMemory::new(&expression.code)?;
     // The compiler emits exactly one `extern "C" fn(i64) -> i64` for this target.
     Ok(unsafe { memory.call(x) })
 }
@@ -51,7 +64,7 @@ mod tests {
     use super::*;
 
     fn run(expression: &str, x: i64) -> i64 {
-        unsafe { execute(&compile(expression).unwrap(), x).unwrap() }
+        execute(&compile(expression).unwrap(), x).unwrap()
     }
 
     #[test]
@@ -62,8 +75,21 @@ mod tests {
         assert_eq!(run("100 / -7", 0), -14);
         assert_eq!(run("x * x + 2 * x + 1", 6), 49);
         assert_eq!(run("-(-x + 4)", 10), 6);
+        assert_eq!(run(" - 9223372036854775808 ", 0), i64::MIN);
+        assert_eq!(run("1 + + 2 * -3", 0), -5);
         assert_eq!(run("9223372036854775807", 0), i64::MAX);
         assert_eq!(run("-9223372036854775808", 0), i64::MIN);
+    }
+
+    #[test]
+    fn rejects_programs_that_are_too_large() {
+        let expression = std::iter::repeat_n("x + ", 1_000)
+            .chain(std::iter::once("x"))
+            .collect::<String>();
+        assert_eq!(
+            compile(&expression).unwrap_err(),
+            CompileError::CodeTooLarge
+        );
     }
 
     #[test]
