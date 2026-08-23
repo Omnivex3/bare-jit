@@ -35,7 +35,7 @@ fn main() {
             process::exit(1);
         }
     };
-    match bare_jit_rs::execute(&code, x) {
+    match unsafe { bare_jit_rs::execute(&code, x) } {
         Ok(result) => println!("{result}"),
         Err(error) => {
             eprintln!("could not create executable memory: {error}");

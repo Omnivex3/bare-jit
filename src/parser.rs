@@ -94,10 +94,21 @@ impl<'a> Parser<'a> {
 
     fn unary(&mut self) -> Result<(), CompileError> {
         if self.take(b'-') {
-            self.unary()?;
-            self.emitter.byte(0x58)?; // pop rax
-            self.emitter.bytes(&[0x48, 0xf7, 0xd8])?; // neg rax
-            self.emitter.byte(0x50)?; // push rax
+            // Parse the minimum i64 directly. Its positive magnitude (2^63)
+            // cannot be represented as an i64 before the negation.
+            self.spaces();
+            if self
+                .input
+                .get(self.position)
+                .is_some_and(|c| c.is_ascii_digit())
+            {
+                self.number(true)?;
+            } else {
+                self.unary()?;
+                self.emitter.byte(0x58)?; // pop rax
+                self.emitter.bytes(&[0x48, 0xf7, 0xd8])?; // neg rax
+                self.emitter.byte(0x50)?; // push rax
+            }
         } else if self.take(b'+') {
             self.unary()?;
         } else {
@@ -122,13 +133,13 @@ impl<'a> Parser<'a> {
                 self.emitter.byte(0x57)?; // push rdi
                 Ok(())
             }
-            Some(c) if c.is_ascii_digit() => self.number(),
+            Some(c) if c.is_ascii_digit() => self.number(false),
             Some(c) => Err(CompileError::ExpectedValue(*c as char)),
             None => Err(CompileError::ExpectedValueEnd),
         }
     }
 
-    fn number(&mut self) -> Result<(), CompileError> {
+    fn number(&mut self, negative: bool) -> Result<(), CompileError> {
         let start = self.position;
         while self
             .input
@@ -138,9 +149,21 @@ impl<'a> Parser<'a> {
             self.position += 1;
         }
         let text = std::str::from_utf8(&self.input[start..self.position]).unwrap();
-        let value = text
-            .parse::<i64>()
+        let magnitude = text
+            .parse::<u64>()
             .map_err(|_| CompileError::IntegerOutOfRange)?;
+        let value = if negative {
+            if magnitude == 1_u64 << 63 {
+                i64::MIN
+            } else {
+                i64::try_from(magnitude)
+                    .ok()
+                    .and_then(|value| value.checked_neg())
+                    .ok_or(CompileError::IntegerOutOfRange)?
+            }
+        } else {
+            i64::try_from(magnitude).map_err(|_| CompileError::IntegerOutOfRange)?
+        };
         self.emitter.bytes(&[0x48, 0xb8])?; // mov rax, imm64
         self.emitter.imm64(value)?;
         self.emitter.byte(0x50) // push rax

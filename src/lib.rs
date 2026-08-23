@@ -35,7 +35,12 @@ pub fn compile(expression: &str) -> Result<Vec<u8>, CompileError> {
     parser::Parser::new(expression).compile()
 }
 
-pub fn execute(code: &[u8], x: i64) -> io::Result<i64> {
+/// Execute compiler-generated x86-64 code with `x` as its argument.
+///
+/// # Safety
+/// `code` must be bytes produced by [`compile`]. Arbitrary bytes are executed
+/// as native machine code and may violate Rust's memory-safety guarantees.
+pub unsafe fn execute(code: &[u8], x: i64) -> io::Result<i64> {
     let memory = executable_memory::ExecutableMemory::new(code)?;
     // The compiler emits exactly one `extern "C" fn(i64) -> i64` for this target.
     Ok(unsafe { memory.call(x) })
@@ -46,7 +51,7 @@ mod tests {
     use super::*;
 
     fn run(expression: &str, x: i64) -> i64 {
-        execute(&compile(expression).unwrap(), x).unwrap()
+        unsafe { execute(&compile(expression).unwrap(), x).unwrap() }
     }
 
     #[test]
@@ -58,6 +63,7 @@ mod tests {
         assert_eq!(run("x * x + 2 * x + 1", 6), 49);
         assert_eq!(run("-(-x + 4)", 10), 6);
         assert_eq!(run("9223372036854775807", 0), i64::MAX);
+        assert_eq!(run("-9223372036854775808", 0), i64::MIN);
     }
 
     #[test]
@@ -70,6 +76,10 @@ mod tests {
         assert_eq!(
             compile("1abc").unwrap_err(),
             CompileError::UnexpectedCharacter('a')
+        );
+        assert_eq!(
+            compile("9223372036854775808").unwrap_err(),
+            CompileError::IntegerOutOfRange
         );
     }
 }
