@@ -1,8 +1,14 @@
 use crate::{codegen::Emitter, CompileError};
 
+/// Caps parser recursion depth. Parens and unary signs emit no code while
+/// descending, so MAX_CODE_SIZE alone cannot bound nesting and deep input
+/// would otherwise overflow the call stack.
+const MAX_NESTING_DEPTH: usize = 1024;
+
 pub struct Parser<'a> {
     input: &'a [u8],
     position: usize,
+    depth: usize,
     emitter: Emitter,
 }
 
@@ -11,6 +17,7 @@ impl<'a> Parser<'a> {
         Self {
             input: input.as_bytes(),
             position: 0,
+            depth: 0,
             emitter: Emitter::new(),
         }
     }
@@ -44,6 +51,14 @@ impl<'a> Parser<'a> {
         } else {
             false
         }
+    }
+
+    fn enter_nesting(&mut self) -> Result<(), CompileError> {
+        self.depth += 1;
+        if self.depth > MAX_NESTING_DEPTH {
+            return Err(CompileError::NestingTooDeep);
+        }
+        Ok(())
     }
 
     fn expression(&mut self) -> Result<(), CompileError> {
@@ -104,13 +119,19 @@ impl<'a> Parser<'a> {
             {
                 self.number(true)?;
             } else {
-                self.unary()?;
+                self.enter_nesting()?;
+                let nested = self.unary();
+                self.depth -= 1;
+                nested?;
                 self.emitter.byte(0x58)?; // pop rax
                 self.emitter.bytes(&[0x48, 0xf7, 0xd8])?; // neg rax
                 self.emitter.byte(0x50)?; // push rax
             }
         } else if self.take(b'+') {
-            self.unary()?;
+            self.enter_nesting()?;
+            let nested = self.unary();
+            self.depth -= 1;
+            nested?;
         } else {
             self.primary()?;
         }
@@ -120,7 +141,9 @@ impl<'a> Parser<'a> {
     fn primary(&mut self) -> Result<(), CompileError> {
         self.spaces();
         if self.take(b'(') {
+            self.enter_nesting()?;
             self.expression()?;
+            self.depth -= 1;
             if !self.take(b')') {
                 return Err(CompileError::ExpectedClosingParen);
             }
