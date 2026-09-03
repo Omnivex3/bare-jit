@@ -19,6 +19,7 @@ pub enum CompileError {
     ExpectedValue(char),
     ExpectedValueEnd,
     IntegerOutOfRange,
+    NestingTooDeep,
     UnexpectedCharacter(char),
 }
 
@@ -30,6 +31,7 @@ impl fmt::Display for CompileError {
             Self::ExpectedValue(c) => write!(f, "expected an integer, x, or '(', found '{c}'"),
             Self::ExpectedValueEnd => write!(f, "expected an integer, x, or '('"),
             Self::IntegerOutOfRange => write!(f, "integer is outside the signed 64-bit range"),
+            Self::NestingTooDeep => write!(f, "expression nesting is too deep"),
             Self::UnexpectedCharacter(c) => write!(f, "unexpected character '{c}'"),
         }
     }
@@ -90,6 +92,32 @@ mod tests {
             compile(&expression).unwrap_err(),
             CompileError::CodeTooLarge
         );
+    }
+
+    #[test]
+    fn rejects_nesting_beyond_the_recursion_limit() {
+        // Each of these shapes recurses without emitting code, so the code
+        // size cap alone never fires on the way down.
+        let parens = format!("{}1{}", "(".repeat(100_000), ")".repeat(100_000));
+        assert_eq!(compile(&parens).unwrap_err(), CompileError::NestingTooDeep);
+        assert_eq!(
+            compile(&format!("{}x", "+".repeat(100_000))).unwrap_err(),
+            CompileError::NestingTooDeep
+        );
+        assert_eq!(
+            compile(&format!("{}x", "-".repeat(100_000))).unwrap_err(),
+            CompileError::NestingTooDeep
+        );
+    }
+
+    #[test]
+    fn accepts_nesting_within_the_recursion_limit() {
+        let parens = format!("{}x{}", "(".repeat(1_000), ")".repeat(1_000));
+        assert_eq!(run(&parens, 7), 7);
+        assert_eq!(run(&format!("{}x", "+".repeat(1_000)), 7), 7);
+        // Unary minus emits 5 bytes per level; 799 (odd, so the negations
+        // don't cancel) stays under MAX_CODE_SIZE.
+        assert_eq!(run(&format!("{}x", "-".repeat(799)), 7), -7);
     }
 
     #[test]
